@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.env
+
+# Hugging Face & Sentence Transformers Local Cache
+.cache/
+huggingface/
+transformers_cache/
+torch/
+
+# Vector Store Storage (Qdrant on-disk artifacts)
+qdrant_data/
+*.qdrant
+*.db
+*.sqlite
+
+# Ingestion Source Documents (Do not commit binary client docs in prod)
+documents/*.pdf
+!documents/README.md
+
+# OS-Specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore all files and contents inside documents/
+documents/*
+
+# Keep the directory tracked in git (optional, via .gitkeep)
+!documents/.gitkeep
