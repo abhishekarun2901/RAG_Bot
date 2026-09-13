@@ -4,22 +4,22 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Directory paths
+    # Member 1 Settings: Ingestion & Semantic Chunking
     DOCUMENTS_DIR: Path = Path("./documents")
     SUPPORTED_EXTENSIONS: List[str] = [".pdf"]
-
-    # Semantic chunking configuration
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
-
-    # Statistical percentile cut-off for cosine distance spike (0.0 to 100.0)
     BREAKPOINT_PERCENTILE_THRESHOLD: float = 85.0
-
-    # Sentence context window buffer (number of adjacent sentences to merge for context)
     BUFFER_SIZE: int = 1
-
-    # Hard bounds to prevent microscopic chunks or LLM context window blowups
     MIN_CHUNK_SIZE: int = 50
     MAX_CHUNK_SIZE: int = 1200
+
+    # Member 2 Settings: Qdrant Vector DB & Hybrid Search
+    QDRANT_STORAGE_PATH: Path = Path("./qdrant_data")
+    QDRANT_COLLECTION_NAME: str = "rag_documents"
+    DEFAULT_TOP_K: int = 4
+    DEFAULT_SIMILARITY_THRESHOLD: float = 0.45
+    HYBRID_DENSE_WEIGHT: float = 0.7
+    HYBRID_SPARSE_WEIGHT: float = 0.3
 
     class Config:
         env_file = ".env"
