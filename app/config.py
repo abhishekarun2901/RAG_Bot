@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     DEFAULT_SIMILARITY_THRESHOLD: float = 0.45
     HYBRID_DENSE_WEIGHT: float = 0.7
     HYBRID_SPARSE_WEIGHT: float = 0.3
-
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL_NAME: str = ""
     class Config:
         env_file = ".env"
         extra = "ignore"
