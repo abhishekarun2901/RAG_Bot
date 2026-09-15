@@ -1,13 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import QueryRequest, QueryResponse, IngestResponse
 from app.services.document_processor import DocumentProcessor
-from app.services.vector_store import HybridVectorStore
 from app.pipeline.graph import rag_graph
 from app.config import settings
+from app.services.vector_store import shared_vector_store as vector_store
 
 router = APIRouter()
-vector_store = HybridVectorStore()
-
 
 @router.post("/ingest", response_model=IngestResponse, status_code=201)
 async def ingest_documents():
@@ -34,10 +32,13 @@ async def chat_query(request: QueryRequest):
             "retrieved_chunks": [],
             "answer": "",
             "sources": [],
-            "context_retrieved": False
+            "context_retrieved": False,
+            "needs_expansion": False,
+            "expansion_target": None,
+            "expansion_attempts": 0,
+            "expanded_contexts": []
         }
 
-        # Execute state machine via LangGraph
         final_state = rag_graph.invoke(initial_state)
 
         return QueryResponse(

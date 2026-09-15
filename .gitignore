@@ -49,3 +49,5 @@ documents/*
 
 # Keep the directory tracked in git (optional, via .gitkeep)
 !documents/.gitkeep
+
+repomix-output.md

@@ -18,7 +18,7 @@ class HybridVectorStore:
         
         # 2. Initialize Embedded Local Qdrant Instance
         storage_path_str = str(settings.QDRANT_STORAGE_PATH.resolve())
-        self.client = QdrantClient(path=storage_path_str)
+        self.client = QdrantClient(host="localhost", port=6333)
         self.collection_name = settings.QDRANT_COLLECTION_NAME
         self._init_collection()
         
@@ -203,3 +203,6 @@ class HybridVectorStore:
             results.append(res_item)
 
         return results
+
+# Shared singleton instance for the app
+shared_vector_store = HybridVectorStore()

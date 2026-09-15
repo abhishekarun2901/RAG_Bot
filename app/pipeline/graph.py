@@ -1,8 +1,9 @@
 import re
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
-from app.services.vector_store import HybridVectorStore
+from app.services.vector_store import shared_vector_store as vector_store
 from app.services.llm_service import LLMService
+from app.mcp_server import fetch_document_page_context
 from app.config import settings
 
 FALLBACK_RESPONSE = "I cannot answer this question based on the provided documents."
@@ -29,10 +30,12 @@ class RAGState(TypedDict):
     answer: str
     sources: List[Dict[str, Any]]
     context_retrieved: bool
+    needs_expansion: bool
+    expansion_target: Optional[Dict[str, Any]]
+    expansion_attempts: int
+    expanded_contexts: List[str]
 
 
-# Global service instances for graph execution
-vector_store = HybridVectorStore()
 llm_service = None
 
 
@@ -110,9 +113,56 @@ def relaxed_search_node(state: RAGState) -> Dict[str, Any]:
     return {"retrieved_chunks": chunks, "effective_filter": None}
 
 
+def grade_context_node(state: RAGState) -> Dict[str, Any]:
+    """Evaluates retrieved chunks for references requiring page expansion."""
+    chunks = state.get("retrieved_chunks", [])
+    attempts = state.get("expansion_attempts", 0)
+
+    if attempts >= 2 or not chunks:
+        return {"needs_expansion": False, "expansion_target": None}
+
+    top_chunk = chunks[0]
+    text_lower = top_chunk.get("chunk_text", "").lower()
+
+    expansion_triggers = ["clause", "subclause", "annex", "table", "paragraph", "refer to"]
+    has_trigger = any(trigger in text_lower for trigger in expansion_triggers)
+
+    if has_trigger:
+        return {
+            "needs_expansion": True,
+            "expansion_target": {
+                "doc_name": top_chunk["doc_name"],
+                "page_number": top_chunk["page_number"]
+            },
+            "expansion_attempts": attempts + 1
+        }
+
+    return {"needs_expansion": False, "expansion_target": None}
+
+
+def expand_context_node(state: RAGState) -> Dict[str, Any]:
+    """Executes MCP tool to widen document page window."""
+    target = state.get("expansion_target")
+    if not target:
+        return {}
+
+    expanded_text = fetch_document_page_context(
+        doc_name=target["doc_name"],
+        page_number=target["page_number"],
+        window_size=1
+    )
+
+    current_expansions = list(state.get("expanded_contexts") or [])
+    current_expansions.append(expanded_text)
+
+    return {"expanded_contexts": current_expansions}
+
+
 def synthesize_node(state: RAGState) -> Dict[str, Any]:
     chunks = state.get("retrieved_chunks", [])
-    if not chunks:
+    expanded = state.get("expanded_contexts", [])
+
+    if not chunks and not expanded:
         return {
             "answer": FALLBACK_RESPONSE,
             "sources": [],
@@ -136,6 +186,10 @@ def synthesize_node(state: RAGState) -> Dict[str, Any]:
                 "page_number": chunk["page_number"],
                 "score": chunk.get("similarity_score") or chunk.get("hybrid_rrf_score")
             })
+
+    if expanded:
+        context_str += "\n--- Expanded Document Context (Surrounding Pages) ---\n"
+        context_str += "\n".join(expanded)
 
     formatted_user_prompt = f"Retrieved Context:\n{context_str}\n\nUser Question: {state['user_query']}"
     service = get_llm_service()
@@ -165,12 +219,18 @@ def synthesize_node(state: RAGState) -> Dict[str, Any]:
 def route_after_targeted(state: RAGState) -> str:
     if len(state.get("retrieved_chunks", [])) < state["top_k"]:
         return "backfill_search"
-    return "synthesize"
+    return "grade_context"
 
 
 def route_after_backfill(state: RAGState) -> str:
     if not state.get("retrieved_chunks") and state["similarity_threshold"] > 0.30:
         return "relaxed_search"
+    return "grade_context"
+
+
+def route_after_grading(state: RAGState) -> str:
+    if state.get("needs_expansion"):
+        return "expand_context"
     return "synthesize"
 
 
@@ -182,19 +242,28 @@ builder.add_node("extract_metadata", extract_metadata_node)
 builder.add_node("targeted_search", targeted_search_node)
 builder.add_node("backfill_search", backfill_search_node)
 builder.add_node("relaxed_search", relaxed_search_node)
+builder.add_node("grade_context", grade_context_node)
+builder.add_node("expand_context", expand_context_node)
 builder.add_node("synthesize", synthesize_node)
 
 builder.set_entry_point("extract_metadata")
 builder.add_edge("extract_metadata", "targeted_search")
+
 builder.add_conditional_edges("targeted_search", route_after_targeted, {
     "backfill_search": "backfill_search",
-    "synthesize": "synthesize"
+    "grade_context": "grade_context"
 })
 builder.add_conditional_edges("backfill_search", route_after_backfill, {
     "relaxed_search": "relaxed_search",
+    "grade_context": "grade_context"
+})
+builder.add_edge("relaxed_search", "grade_context")
+
+builder.add_conditional_edges("grade_context", route_after_grading, {
+    "expand_context": "expand_context",
     "synthesize": "synthesize"
 })
-builder.add_edge("relaxed_search", "synthesize")
+builder.add_edge("expand_context", "synthesize")
 builder.add_edge("synthesize", END)
 
 rag_graph = builder.compile()
