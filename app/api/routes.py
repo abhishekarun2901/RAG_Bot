@@ -2,26 +2,13 @@ from fastapi import APIRouter, HTTPException
 from app.models.schemas import QueryRequest, QueryResponse, IngestResponse
 from app.services.document_processor import DocumentProcessor
 from app.services.vector_store import HybridVectorStore
-from app.services.llm_service import LLMService
-from app.pipeline.rag_engine import RAGEngine
+from app.pipeline.graph import rag_graph
 from app.config import settings
- 
+
 router = APIRouter()
- 
-# Global pipeline instances
 vector_store = HybridVectorStore()
-llm_service = None
-rag_engine = None
- 
- 
-def get_rag_engine() -> RAGEngine:
-    global llm_service, rag_engine
-    if rag_engine is None:
-        llm_service = LLMService()
-        rag_engine = RAGEngine(vector_store=vector_store, llm_service=llm_service)
-    return rag_engine
- 
- 
+
+
 @router.post("/ingest", response_model=IngestResponse, status_code=201)
 async def ingest_documents():
     try:
@@ -33,18 +20,31 @@ async def ingest_documents():
         return IngestResponse(status="Success", total_chunks_indexed=len(chunks))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failure: {str(e)}")
- 
- 
+
+
 @router.post("/chat", response_model=QueryResponse)
 async def chat_query(request: QueryRequest):
     try:
-        engine = get_rag_engine()
-        result = engine.query(
-            user_query=request.query,
-            top_k=request.top_k,
-            similarity_threshold=request.similarity_threshold,
-            metadata_filter=request.metadata_filter
+        initial_state = {
+            "user_query": request.query,
+            "top_k": request.top_k or settings.DEFAULT_TOP_K,
+            "similarity_threshold": request.similarity_threshold or settings.DEFAULT_SIMILARITY_THRESHOLD,
+            "metadata_filter": request.metadata_filter,
+            "effective_filter": None,
+            "retrieved_chunks": [],
+            "answer": "",
+            "sources": [],
+            "context_retrieved": False
+        }
+
+        # Execute state machine via LangGraph
+        final_state = rag_graph.invoke(initial_state)
+
+        return QueryResponse(
+            query=request.query,
+            answer=final_state["answer"],
+            sources=final_state["sources"],
+            context_retrieved=final_state["context_retrieved"]
         )
-        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Graph execution failure: {str(e)}")

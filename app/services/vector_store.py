@@ -1,3 +1,4 @@
+import atexit
 import re
 import uuid
 import numpy as np
@@ -24,6 +25,17 @@ class HybridVectorStore:
         # 3. In-Memory BM25 Sparse Corpus
         self.bm25_chunks: List[Dict[str, Any]] = []
         self.bm25_model: Optional[BM25Okapi] = None
+
+        # Register exit handler to prevent Qdrant local client teardown warnings on exit
+        atexit.register(self.close)
+
+    def close(self):
+        """Explicitly close Qdrant connection before Python interpreter teardown."""
+        if hasattr(self, "client") and self.client is not None:
+            try:
+                self.client.close()
+            except Exception:
+                pass
 
     def _init_collection(self):
         """Creates the Qdrant collection if it does not already exist."""
