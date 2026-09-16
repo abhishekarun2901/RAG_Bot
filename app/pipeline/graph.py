@@ -4,6 +4,7 @@ from langgraph.graph import StateGraph, END
 from app.services.vector_store import shared_vector_store as vector_store
 from app.services.llm_service import LLMService
 from app.mcp_server import fetch_document_page_context
+from app.pipeline.guardrails import InputGuardrails
 from app.config import settings
 
 FALLBACK_RESPONSE = "I cannot answer this question based on the provided documents."
@@ -34,6 +35,9 @@ class RAGState(TypedDict):
     expansion_target: Optional[Dict[str, Any]]
     expansion_attempts: int
     expanded_contexts: List[str]
+    # Guardrail State Fields
+    is_blocked: bool
+    blocked_reason: str
 
 
 llm_service = None
@@ -47,6 +51,28 @@ def get_llm_service() -> LLMService:
 
 
 # --- Node Definitions ---
+
+def input_guardrail_node(state: RAGState) -> Dict[str, Any]:
+    """Layer 2 Guardrail: Validates input and sanitizes PII before execution."""
+    raw_query = state["user_query"]
+    is_safe, sanitized_query, reason = InputGuardrails.validate_and_sanitize(raw_query)
+
+    if not is_safe:
+        return {
+            "user_query": raw_query,
+            "is_blocked": True,
+            "blocked_reason": reason,
+            "answer": f"Request blocked: {reason}",
+            "sources": [],
+            "context_retrieved": False
+        }
+
+    return {
+        "user_query": sanitized_query,
+        "is_blocked": False,
+        "blocked_reason": ""
+    }
+
 
 def extract_metadata_node(state: RAGState) -> Dict[str, Any]:
     query = state["user_query"]
@@ -159,6 +185,14 @@ def expand_context_node(state: RAGState) -> Dict[str, Any]:
 
 
 def synthesize_node(state: RAGState) -> Dict[str, Any]:
+    # Handle early exit if blocked by input guardrail
+    if state.get("is_blocked"):
+        return {
+            "answer": state.get("answer", "Request blocked by safety policy."),
+            "sources": [],
+            "context_retrieved": False
+        }
+
     chunks = state.get("retrieved_chunks", [])
     expanded = state.get("expanded_contexts", [])
 
@@ -216,6 +250,12 @@ def synthesize_node(state: RAGState) -> Dict[str, Any]:
 
 # --- Conditional Routing Logic ---
 
+def route_after_guardrail(state: RAGState) -> str:
+    if state.get("is_blocked"):
+        return "synthesize"
+    return "extract_metadata"
+
+
 def route_after_targeted(state: RAGState) -> str:
     if len(state.get("retrieved_chunks", [])) < state["top_k"]:
         return "backfill_search"
@@ -238,6 +278,7 @@ def route_after_grading(state: RAGState) -> str:
 
 builder = StateGraph(RAGState)
 
+builder.add_node("input_guardrail", input_guardrail_node)
 builder.add_node("extract_metadata", extract_metadata_node)
 builder.add_node("targeted_search", targeted_search_node)
 builder.add_node("backfill_search", backfill_search_node)
@@ -246,7 +287,14 @@ builder.add_node("grade_context", grade_context_node)
 builder.add_node("expand_context", expand_context_node)
 builder.add_node("synthesize", synthesize_node)
 
-builder.set_entry_point("extract_metadata")
+# Set input guardrail as true entry point
+builder.set_entry_point("input_guardrail")
+
+builder.add_conditional_edges("input_guardrail", route_after_guardrail, {
+    "synthesize": "synthesize",
+    "extract_metadata": "extract_metadata"
+})
+
 builder.add_edge("extract_metadata", "targeted_search")
 
 builder.add_conditional_edges("targeted_search", route_after_targeted, {

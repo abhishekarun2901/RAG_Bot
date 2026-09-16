@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router as api_router
 from app.mcp_server import mcp
-
 app = FastAPI(
     title="Enterprise Document RAG API",
     version="1.0.0",
